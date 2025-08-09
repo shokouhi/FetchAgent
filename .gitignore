@@ -1,0 +1,25 @@
+@'
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+.env
+.venv/
+venv/
+ENV/
+.env.*
+# Build
+build/
+dist/
+# Tools
+.ipynb_checkpoints/
+.coverage
+.pytest_cache/
+.mypy_cache/
+# Editors/OS
+.DS_Store
+Thumbs.db
+.vscode/
+.cursor/
+'@ | Out-File -Encoding UTF8 .gitignore
