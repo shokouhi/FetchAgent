@@ -1,0 +1,84 @@
+Step-by-step
+User input
+You read url + question from stdin.
+
+LLM selection (via PROVIDER)
+You pick the chat model (OpenAI/Gemini/etc.) and build the LangChain agent. PROVIDER only affects this piece.
+
+Spin up MCP server
+MCPClient.start() launches mcp_web_server.py as a subprocess using stdio pipes (AnyIO). Then it opens an MCP session and sends initialize and list_tools.
+
+Wrap MCP tools for LangChain
+You create LangChain Tools whose coroutine is basically:
+
+lambda url: mcp_client.call_tool("fetch_page", {"url": url})
+To LangChain, they’re just async Python functions.
+
+Agent run begins
+AgentExecutor.ainvoke({...}) kicks off the loop: plan → (maybe) call a tool → observe → revise → answer.
+
+LLM decides to call a tool
+The LLM outputs an action like: use fetch_page with {url: ...}.
+
+LangChain → MCP client
+LangChain calls the tool’s coroutine → your wrapper calls mcp_client.call_tool(...).
+
+MCP client → MCP server (JSON-RPC over stdio)
+Client sends:
+
+callTool { name: "fetch_page", arguments: { url: "..." } }
+Server routes that to your Python function.
+
+Tool executes and returns structured content
+Your server code fetches the page, returns e.g.:
+
+toolResult { structuredContent: { ok: true, html: "...", status: 200 } }
+The client surfaces that result back to LangChain.
+
+Agent continues / final answer
+The observation (HTML/parsed text) feeds into the next LLM step. Eventually, the agent emits a final answer.
+On teardown you call await mcp_client.stop() to cleanly close the session and stdio ctx.
+
+Flow diagram (sequence)
+User
+  |
+  v
+agent_page_qa.py ---------------------------+
+  |                                        |
+  | read url/question                      |
+  | build LLM from PROVIDER                |
+  | create MCPClient + start()             |
+  |   (launch mcp_web_server.py)           |
+  |   (MCP: initialize, list_tools)        |
+  | wrap MCP tools as LangChain Tools      |
+  | create AgentExecutor                   |
+  |                                        |
+  |------------------ invoke --------------> LangChain Agent
+                           |  (LLM plans)
+                           |-- tool: fetch_page(url) -->
+                           |                          \
+                           |                           v
+                           |                    Tool wrapper (async)
+                           |                           |
+                           |                           v
+                           |                    mcp_client.call_tool(...)
+                           |                           |
+                           |                 JSON-RPC over stdio
+                           |                           |
+                           |                           v
+                           |                   MCP Server (web)
+                           |                   - fetch_page(url)
+                           |                   - extract_links(url)
+                           |                           |
+                           |           toolResult {structuredContent: {...}}
+                           |<--------------------------|
+                    observation (HTML/text/JSON)       |
+                           |                            |
+                     (LLM reasons)                      |
+                           |                            |
+                    final answer <----------------------+
+  |
+  | print answer
+  | await mcp_client.stop()  (session.__aexit__ → stdio __aexit__)
+  v
+Done
